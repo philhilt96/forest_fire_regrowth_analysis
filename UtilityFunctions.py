@@ -1,85 +1,97 @@
-import matplotlib.pyplot as plt
+import os
+import pandas as pd
 from osgeo import gdal
 
-# return the NDVI band raw pixels as an array
-def get_ndvi_band_pixels(hdf_file):
-    # open file and open NDVI subset and get relevant meta data
-    raw_data = gdal.Open(hdf_file, gdal.GA_ReadOnly)
-    subdataset = gdal.Open(raw_data.GetSubDatasets()[0][0], gdal.GA_ReadOnly)
-    ndvi_metadata = subdataset.GetMetadata()
-    # ndvi_fill_value = int(ndvi_metadata['_FillValue'])
-    nvdi_scale_factor = int(ndvi_metadata['scale_factor'])
-    # convert to array - will be NxN pixel size matrix
-    band = subdataset.GetRasterBand(1)
-    data = band.ReadAsArray()
-    scaled_data = data / nvdi_scale_factor
-    # close safely
-    raw_data = None
-    subdataset = None
+def convert_tif_folder_to_csv(folder_name):
+    # Get all .tif files
+    data_folder = folder_name
+    tif_files = os.listdir(data_folder)
 
-    return scaled_data
+    df = pd.DataFrame()
 
-# function not working - don't import
-def pre_process_hdf(hdf_file):
-  # Open the MOD13A3 hdf file, use full file path
-  raw_data = gdal.Open(hdf_file, gdal.GA_ReadOnly)
-  subdatasets = raw_data.GetSubDatasets()
+    # loop through files and add to dataframe, adding NBR as last column
+    for file in tif_files:
+        if not file.endswith('.tif'):
+                print('skipping ' + file)
+                continue
+        try:
+            print('opening ' + file)
+            # Open the .tif file and get the number of bands
+            ds = gdal.Open(os.path.join(data_folder, file))
+            num_bands = ds.RasterCount
 
-  # select the subdataset containing NDVI data
-  ndvi_subdataset = None
-  for subdataset in subdatasets:
-      if "NDVI" in subdataset[0]:
-          ndvi_subdataset = subdataset[0]
-          break
-  # open ndvi subset and subset out the bounding affected area rectangle
-  ndvi_raw_dataset = gdal.Open(ndvi_subdataset, gdal.GA_ReadOnly)
+            # Loop through each band and extract the pixel values
+            for i in range(1, num_bands+1):
+                band = ds.GetRasterBand(i)
+                band_name = file.split('-')[1].rstrip('.tif')
+                band_data = band.ReadAsArray()
+                print(f'flattening array shape {band_data.shape} to 1D array')
+                data = band_data.ravel()
+                df[band_name] = data.astype('float32')
 
-  # get metadata variables
-  ndvi_metadata = ndvi_raw_dataset.GetMetadata()
-  # footprint boundary GPS coordinates
-  boundary_n = float(ndvi_metadata['NORTHBOUNDINGCOORDINATE'])
-  boundary_s = float(ndvi_metadata['SOUTHBOUNDINGCOORDINATE'])
-  boundary_e = float(ndvi_metadata['EASTBOUNDINGCOORDINATE'])
-  boundary_w = float(ndvi_metadata['WESTBOUNDINGCOORDINATE'])
-  # values to calculate true NDVI from raw data
-  ndvi_fill_value = int(ndvi_metadata['_FillValue'])
-  nvdi_scale_factor = int(ndvi_metadata['scale_factor'])
+            # Close the .tif file
+            ds = None
+        except Exception as e:
+            print(e)
 
-  # convert to np array
-  ndvi_raw_data = ndvi_raw_dataset.ReadAsArray()
+    print(f'saving {data_folder} to .csv')
+    print(f'Dataframe shape: {df.shape}')
+    print(df.head)
+    # Save the pixel values to a .csv file
+    df.to_csv(f'{data_folder}.csv', index=False)
 
-  # NDVI from raw data, ndvi = (ndvi_raw - ndvi_fill) / ndvi_scale
-  ndvi_data = ndvi_raw_data / nvdi_scale_factor
 
-  # close the datasets
-  ndvi_dataset = None
-  hdf_file = None
+# plot normalized values vertically
+# columns = ['NBR', 'ARI2', 'ARI1', 'CRI2', 'CSI']
+# # Iterate over each column
+# for column in columns:
+#     min_value = df_copy[column].min()
+#     max_value = df_copy[column].max()
+#     mean_value = df_copy[column].mean()
+#     print(f"{column} - Min: {min_value}, Max: {max_value}, Mean: {mean_value}")
+#     nbr = df[column].to_numpy()
+#     nbr_matrix = nbr.reshape(2935, 3399)
+#     print(type(nbr_matrix[0][0]))
+#     plt.figure(figsize=(5, 5))
+#     plt.imshow(nbr_matrix, vmin=min_value, vmax=max_value)
+#     plt.colorbar()
 
-  # get the effected fire area from spacial GPS rectangle
-  n, m = ndvi_data.shape
-  spatial_n, spatial_s, spatial_e, spatial_w = (39.22, 37.66, -119.57, -120.81)
-  # Transopse the spacial data from the bounding box - needs to be fixed
-  row_start = int((boundary_n - spatial_n) / (boundary_n - boundary_s) * n)
-  row_end = int((boundary_n - spatial_s) / (boundary_n - boundary_s) * n)
-  col_start = int((spatial_w - boundary_w) / (boundary_e - boundary_w) * m)
-  col_end = int((spatial_e - boundary_w) / (boundary_e - boundary_w) * m)
-  # Extract the smaller area of the NDVI array
-  spacial_ndvi_data = ndvi_data[row_start:row_end, col_start:col_end]
+# plot normalized  values
+# Normalized to [0:1] - 'CSI', 'ARI1', 'CRI2'
+# Normalized to [-1,1] - 'NBR', 'ARI2'
+# Determine the number of rows and columns for subplots
+# num_bands = len(band_names)
+# num_rows = math.ceil(math.sqrt(num_bands))
+# num_cols = math.ceil(num_bands / num_rows)
 
-  # ndvi_mean = np.mean(spacial_ndvi_data)
-  # ndvi_std = np.std(spacial_ndvi_data)
-  # ndvi_skew = sp.stats.skew(spacial_ndvi_data)
+# # Plot each band in a separate subplot
+# fig, axes = plt.subplots(num_rows, num_cols, figsize=(10, 10))
+# fig.tight_layout(pad=3.0)  # Adjust spacing between subplots
 
-  # get x and y values from ndvi dataset
-  # x, y = np.meshgrid(range(spacial_ndvi_data.shape[1]), range(spacial_ndvi_data.shape[0]))
-  # convert numpy array to dataframe
-  # cleaned_ndvi_dataset = np.stack([spacial_ndvi_data, np.full_like(spacial_ndvi_data,ndvi_mean), np.full_like(spacial_ndvi_data,ndvi_std), np.full_like(spacial_ndvi_data,ndvi_skew), x, y], axis=2)
-  # cleaned_ndvi_reshaped = cleaned_ndvi_dataset.reshape(-1, 6)
+# for i, band_name in enumerate(band_names):
+#     row = i // num_cols
+#     col = i % num_cols
 
-  # Calculate RTI using Theil-Sen's estimator
-  # Call function to calculate RTI
-  # rti_data = rti(ndvi_data)
+#     band = df[band_name].to_numpy()
+#     band_matrix = band.reshape(2935, 3399)
 
-  # return ndvi_raw_data
-  return spacial_ndvi_data
-  # return pd.DataFrame(cleaned_ndvi_reshaped, columns=['NDVI', 'mean', 'std', 'skew', 'x', 'y'])
+#     vmin, vmax = None, None
+#     if band_name in ['NBR', 'ARI2']:
+#         vmin, vmax = -1, 1
+#     elif band_name in ['CSI', 'ARI1', 'CRI2']:
+#         vmin, vmax = 0, 1
+
+#     img = axes[row, col].imshow(band_matrix, cmap='jet', vmin=vmin, vmax=vmax)
+#     axes[row, col].set_title(band_name)
+#     axes[row, col].axis('off')
+
+#     # Add colorbar
+#     cbar = fig.colorbar(img, ax=axes[row, col], aspect=30, pad=0.05)
+#     cbar.set_label('Value')
+
+# # Remove empty subplots
+# if num_bands < num_rows * num_cols:
+#     for i in range(num_bands, num_rows * num_cols):
+#         fig.delaxes(axes.flatten()[i])
+
+# plt.show()
